@@ -1,0 +1,74 @@
+<div class="min-h-screen bg-neutral-900 text-white flex items-center justify-center p-6 font-sans select-none">
+  
+  <div class="max-w-2xl w-full flex flex-col gap-8">
+    <!-- Header -->
+    <div class="text-center">
+      <h1 class="text-4xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent mb-2">
+        Neural Speech-to-Text
+      </h1>
+      <p class="text-neutral-400 capitalize">{{ statusText() }}</p>
+    </div>
+
+    <!-- Error Banner using Angular 17 Control Flow -->
+    @if (errorMessage()) {
+    <div class="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg flex items-center gap-3 animate-fade-in">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+      {{ errorMessage() }}
+    </div>
+    }
+
+    <!-- Interactive Dropzone & Record Area -->
+    <div 
+      class="relative border-2 border-dashed rounded-3xl p-10 flex flex-col items-center justify-center transition-all duration-300"
+      [ngClass]="isDragging() ? 'border-purple-500 bg-purple-500/10' : 'border-neutral-700 bg-neutral-800'"
+      (dragover)="onDragOver($event)" 
+      (dragleave)="onDragLeave($event)" 
+      (drop)="onDrop($event)">
+      
+      <!-- Microphone Button -->
+      <!-- We explicitly prevent contextmenu to block mobile long-press menu during hold-to-record -->
+      <button 
+        (pointerdown)="onPointerDown($event)" 
+        (pointerup)="onPointerUp($event)" 
+        (pointercancel)="onPointerUp($event)"
+        (pointerleave)="onPointerUp($event)"
+        (contextmenu)="$event.preventDefault()"
+        class="w-32 h-32 rounded-full flex items-center justify-center transition-all duration-300 shadow-xl touch-none outline-none"
+        [ngClass]="isRecording() ? 'bg-red-500 scale-110 shadow-[0_0_40px_rgba(239,68,68,0.6)] animate-pulse' : 'bg-gradient-to-br from-blue-500 to-purple-600 hover:scale-105'">
+        
+        <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+        </svg>
+
+      </button>
+
+      <p class="mt-6 text-xl font-medium text-neutral-300">
+        {{ isRecording() ? 'Release to stop' : 'Hold to Record' }}
+      </p>
+      <p class="text-sm text-neutral-500 mt-2">or click once to toggle manually.</p>
+      <p class="text-sm text-neutral-500 mt-1">(You can also drag and drop audio files here)</p>
+    </div>
+
+    <!-- Transcript Output Area -->
+    <div class="bg-neutral-800 border border-neutral-700 rounded-2xl p-6 min-h-[160px] shadow-lg flex flex-col user-select-text">
+      <h3 class="text-sm font-semibold text-neutral-400 mb-3 uppercase tracking-wider flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+        Transcript Output
+      </h3>
+      
+      <div class="flex-1 text-lg leading-relaxed whitespace-pre-wrap rounded">
+        @if (!transcript() && statusText() !== 'Transcribing...') {
+          <span class="text-neutral-600 italic">Captions will appear here after processing...</span>
+        } @else if (statusText() === 'Transcribing...') {
+          <span class="flex items-center gap-3 text-purple-400 my-2">
+              <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <span>Generating AI transcript, analyzing audio features...</span>
+          </span>
+        } @else {
+          <span class="text-neutral-100 font-medium">{{ transcript() }}</span>
+        }
+      </div>
+    </div>
+  </div>
+
+</div>
