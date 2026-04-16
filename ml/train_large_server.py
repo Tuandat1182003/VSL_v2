@@ -62,12 +62,13 @@ model = WhisperForConditionalGeneration.from_pretrained(
     device_map="auto"
 )
 model = prepare_model_for_kbit_training(model)
+model.config.use_cache = False  # Bắt buộc tắt cache để dùng được Gradient Checkpointing
 
 # 4. LoRA Configuration
 print("Applying LoRA parameters...")
 config = LoraConfig(
-    r=16, # Tăng rank lên 16 cho model lớn
-    lora_alpha=32,
+    r=32, # Tăng rank lên 32 để mô hình có không gian học tốt nhất
+    lora_alpha=64, # Alpha luôn giữ bằng 2 lần rank
     target_modules=["q_proj", "v_proj"],
     lora_dropout=0.05,
     bias="none"
@@ -78,8 +79,9 @@ model.print_trainable_parameters()
 # 5. Training Setup
 training_args = Seq2SeqTrainingArguments(
     output_dir="./whisper-lora-large-finetuned",
-    per_device_train_batch_size=8,       # Đã tăng lên 8 (hoặc 16 nếu VRAM cho phép)
-    gradient_accumulation_steps=2,       
+    per_device_train_batch_size=2,       # Giảm gánh nặng cho VRAM
+    gradient_accumulation_steps=8,       # Bù trừ lại bằng cách cộng gộp gradient (2 x 8 = 16) giúp model vẫn học cực thông minh
+    gradient_checkpointing=True,         # BẬT TÍNH NĂNG NÀY: Giảm 50%-70% VRAM tiêu thụ, giúp chạy mượt mà không bị Crash OOM
     learning_rate=1e-3,
     num_train_epochs=3,
     fp16=True,                           
