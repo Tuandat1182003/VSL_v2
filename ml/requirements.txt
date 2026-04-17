@@ -1,0 +1,31 @@
+# ==================================================
+# Requirements for Whisper Fine-Tuning (LoRA)
+# ==================================================
+
+# PyTorch - CUDA version (chọn phiên bản phù hợp GPU)
+# Cài riêng theo hướng dẫn: https://pytorch.org/get-started/locally/
+# Ví dụ: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+torch
+torchaudio
+
+# Hugging Face Transformers ecosystem
+transformers>=4.39.0
+datasets>=2.18.0
+evaluate>=0.4.0
+accelerate>=0.27.0
+
+# PEFT - Parameter Efficient Fine-Tuning (LoRA)
+peft>=0.9.0
+
+# Quantization support (cần cho train_whisper_lora.py - 8-bit mode)
+bitsandbytes>=0.43.0
+
+# Audio processing
+soundfile>=0.12.0
+librosa>=0.10.0
+
+# WER metric (Word Error Rate)
+jiwer>=3.0.0
+
+# Utilities
+numpy>=1.24.0

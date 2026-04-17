@@ -12,21 +12,22 @@ from transformers import (
     EarlyStoppingCallback,
     set_seed
 )
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 """
-HIGH-PERFORMANCE SCRIPT FOR RTX 5090 Ti (~32GB VRAM)
+OPTIMIZED SCRIPT FOR RTX 5060 Ti (~16GB VRAM)
 =====================================================
-Tối ưu tối đa cho card cao cấp:
+Tối ưu cho card 16GB VRAM:
 
-1. bf16 full precision (KHÔNG dùng 8-bit quantization) → chất lượng model tốt hơn
-2. Batch size lớn (8) + gradient accumulation (4) → effective batch = 32
-3. LoRA rank 64 + target 6 modules → không gian học cực lớn
+1. 8-bit quantization (bitsandbytes) → giảm ~50% VRAM cho model weights
+2. Batch size nhỏ (2) + gradient accumulation (16) → effective batch = 32
+3. LoRA rank 32 + target 4 modules → cân bằng chất lượng và VRAM
 4. WER metric thay vì loss → đánh giá chính xác chất lượng STT
 5. Warmup + Cosine scheduler → ổn định training
 6. Vietnamese text normalization
 7. Dùng test set có sẵn thay vì tự split
-8. torch.float16 → torch.bfloat16 (native trên RTX 50-series)
+8. 8-bit optimizer (adamw_bnb_8bit) → tiết kiệm thêm VRAM
+9. Gradient checkpointing → giảm ~60% VRAM cho activations
 """
 
 # ========================
@@ -104,32 +105,32 @@ def prepare_dataset(batch):
 
 
 print("Preprocessing train dataset...")
-train_dataset = train_dataset.map(prepare_dataset, remove_columns=train_dataset.column_names, num_proc=8)
+train_dataset = train_dataset.map(prepare_dataset, remove_columns=train_dataset.column_names, num_proc=4)
 
 print("Preprocessing eval dataset...")
-eval_dataset = eval_dataset.map(prepare_dataset, remove_columns=eval_dataset.column_names, num_proc=8)
+eval_dataset = eval_dataset.map(prepare_dataset, remove_columns=eval_dataset.column_names, num_proc=4)
 
 # ========================
-# 4. MODEL LOADING — FULL bf16 (KHÔNG quantize, tận dụng 32GB VRAM)
+# 4. MODEL LOADING — 8-bit quantization (tiết kiệm VRAM cho 16GB)
 # ========================
-print(f"Loading {MODEL_ID} in bf16 full precision...")
+print(f"Loading {MODEL_ID} in 8-bit quantization...")
 model = WhisperForConditionalGeneration.from_pretrained(
     MODEL_ID,
-    torch_dtype=torch.bfloat16,   # bf16 native trên RTX 50-series → chất lượng tốt hơn 8-bit
+    load_in_8bit=True,            # 8-bit quantization → giảm ~50% VRAM model weights
     device_map="auto"
 )
-model.config.use_cache = False  # Tắt cache để dùng Gradient Checkpointing
+model.config.use_cache = False    # Tắt cache để dùng Gradient Checkpointing
+model = prepare_model_for_kbit_training(model)  # Chuẩn bị model cho LoRA + quantization
 
 # ========================
-# 5. LoRA CONFIGURATION (Rank 64, 6 modules — tận dụng VRAM dư dả)
+# 5. LoRA CONFIGURATION (Rank 32, 4 modules — cân bằng cho 16GB VRAM)
 # ========================
 print("Applying LoRA parameters...")
 lora_config = LoraConfig(
-    r=64,                    # Rank 64: VRAM đủ lớn → cho mô hình không gian học tối đa
-    lora_alpha=128,          # Alpha = 2x rank
-    target_modules=[         # Target toàn bộ attention + feed-forward
-        "q_proj", "k_proj", "v_proj", "out_proj",
-        "fc1", "fc2"
+    r=32,                    # Rank 32: cân bằng chất lượng và VRAM
+    lora_alpha=64,           # Alpha = 2x rank
+    target_modules=[         # Target attention modules chính
+        "q_proj", "k_proj", "v_proj", "out_proj"
     ],
     lora_dropout=0.05,
     bias="none"
@@ -160,19 +161,19 @@ def compute_metrics(pred):
     return {"wer": wer}
 
 # ========================
-# 7. TRAINING ARGUMENTS — Tối ưu cho RTX 5090 Ti
+# 7. TRAINING ARGUMENTS — Tối ưu cho RTX 5060 Ti 16GB VRAM
 # ========================
 training_args = Seq2SeqTrainingArguments(
     output_dir=OUTPUT_DIR,
-    per_device_train_batch_size=4,       # An toàn cho 32GB VRAM với bf16 + grad checkpoint
-    per_device_eval_batch_size=2,        # Eval nhỏ hơn vì predict_with_generate tốn thêm VRAM
-    gradient_accumulation_steps=8,       # Effective batch size = 4 x 8 = 32 (vẫn giữ nguyên)
+    per_device_train_batch_size=2,       # Batch nhỏ cho 16GB VRAM
+    per_device_eval_batch_size=1,        # Eval nhỏ vì predict_with_generate tốn thêm VRAM
+    gradient_accumulation_steps=16,      # Effective batch size = 2 x 16 = 32 (giữ nguyên)
     gradient_checkpointing=True,         # Giảm ~60% VRAM cho activations
     learning_rate=1e-4,                  # Phù hợp cho fine-tune large model
     warmup_steps=500,                    # Tăng LR từ từ trong 500 bước đầu
     lr_scheduler_type="cosine",          # Giảm LR mượt mà
     num_train_epochs=5,                  # 5 epochs + early stopping
-    bf16=True,                           # bf16 native trên RTX 50-series (tốt hơn fp16)
+    fp16=True,                           # fp16 mixed precision (8-bit model không hỗ trợ bf16)
     predict_with_generate=True,          # Bắt buộc để tính WER
     generation_max_length=225,
     evaluation_strategy="steps",
@@ -182,7 +183,7 @@ training_args = Seq2SeqTrainingArguments(
     logging_steps=25,                    # Log thường xuyên hơn để theo dõi
     remove_unused_columns=False,
     label_names=["labels"],
-    optim="adamw_torch",                 # AdamW chuẩn (KHÔNG cần 8-bit optimizer vì VRAM dư)
+    optim="adamw_bnb_8bit",              # 8-bit optimizer → tiết kiệm ~30% VRAM cho optimizer states
     load_best_model_at_end=True,
     metric_for_best_model="wer",         # WER thay vì loss
     greater_is_better=False,
@@ -232,15 +233,16 @@ trainer = Seq2SeqTrainer(
 torch.cuda.empty_cache()
 
 print("=" * 60)
-print("  RTX 5090 Ti — HIGH-PERFORMANCE TRAINING")
+print("  RTX 5060 Ti 16GB — OPTIMIZED TRAINING")
 print("=" * 60)
 print(f"  Model:          {MODEL_ID}")
-print(f"  VRAM:           ~32GB (bf16 full precision, không quantize)")
+print(f"  VRAM:           ~16GB (8-bit quantization + gradient checkpoint)")
 print(f"  Batch size:     {training_args.per_device_train_batch_size} x {training_args.gradient_accumulation_steps} = {training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps}")
 print(f"  Learning rate:  {training_args.learning_rate}")
 print(f"  Scheduler:      cosine (warmup {training_args.warmup_steps} steps)")
 print(f"  Epochs:         {training_args.num_train_epochs} (early stopping patience=3)")
 print(f"  LoRA rank:      {lora_config.r}, targets: {lora_config.target_modules}")
+print(f"  Optimizer:      adamw_bnb_8bit")
 print(f"  Metric:         WER (Word Error Rate)")
 print("=" * 60)
 
